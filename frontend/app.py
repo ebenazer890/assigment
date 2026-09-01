@@ -2,6 +2,8 @@
 Streamlit frontend for Role-Level AI Intelligence Platform
 MODUS Enterprise AI Build Challenge - Assignment 6
 """
+import sys
+import os
 import streamlit as st
 import requests
 import pandas as pd
@@ -10,8 +12,22 @@ import plotly.graph_objects as go
 from typing import List, Dict, Optional
 import json
 
+# Ensure project root is in sys.path for direct imports on Streamlit Cloud
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+backend_dir = os.path.join(ROOT_DIR, "backend")
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+# Direct DB and Service Imports for Streamlit Cloud Fallback
+from app.db.database import get_db, init_db
+from app.repositories import RoleRepository, ResearchSourceRepository
+from app.services import RoleAnalysisService, RoleComparisonService, AnalyticsService, RoleCreationService
+from app.ai_service import AIService
+
 # Configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 st.set_page_config(
     page_title="Role-Level AI Intelligence Platform | MODUS",
@@ -181,121 +197,190 @@ st.markdown("""
 
 
 # ========================
-# API Helper Functions
+# Helper Functions (API + Standalone Fallback)
 # ========================
 
+def get_standalone_db():
+    """Ensure DB initialized for standalone Streamlit Cloud execution"""
+    init_db()
+    return next(get_db())
+
+
 def fetch_roles():
-    """Fetch all roles from API"""
+    """Fetch all roles from API with direct DB fallback"""
     try:
-        response = requests.get(f"{API_BASE_URL}/roles")
+        response = requests.get(f"{API_BASE_URL}/roles", timeout=1.5)
         if response.status_code == 200:
             return response.json()
-        return []
-    except Exception as e:
-        st.error(f"Backend API connection error: {e}")
-        return []
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    roles = RoleRepository.get_all(db)
+    return [{"id": r.id, "name": r.name, "department": r.department, "description": r.description} for r in roles]
 
 
 def fetch_role_detail(role_id: int):
-    """Fetch detailed role information"""
+    """Fetch detailed role information with direct service fallback"""
     try:
-        response = requests.get(f"{API_BASE_URL}/roles/{role_id}")
+        response = requests.get(f"{API_BASE_URL}/roles/{role_id}", timeout=1.5)
         if response.status_code == 200:
             return response.json()
-        return None
-    except Exception as e:
-        st.error(f"Error fetching role details: {e}")
-        return None
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    return RoleAnalysisService.get_role_detail(db, role_id)
 
 
 def fetch_role_analysis(role_id: int):
-    """Fetch role analysis"""
+    """Fetch role analysis with direct service fallback"""
     try:
-        response = requests.get(f"{API_BASE_URL}/roles/{role_id}/analysis")
+        response = requests.get(f"{API_BASE_URL}/roles/{role_id}/analysis", timeout=1.5)
         if response.status_code == 200:
             return response.json()
-        return None
-    except Exception as e:
-        st.error(f"Error analyzing role: {e}")
-        return None
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    return RoleAnalysisService.analyze_role(db, role_id)
 
 
 def fetch_dashboard_stats():
-    """Fetch dashboard statistics"""
+    """Fetch dashboard statistics with direct service fallback"""
     try:
-        response = requests.get(f"{API_BASE_URL}/analytics/dashboard")
+        response = requests.get(f"{API_BASE_URL}/analytics/dashboard", timeout=1.5)
         if response.status_code == 200:
             return response.json()
-        return None
-    except Exception as e:
-        st.error(f"Error fetching dashboard stats: {e}")
-        return None
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    return AnalyticsService.get_dashboard_stats(db)
 
 
 def fetch_top_ai_impact_roles(limit: int = 5):
-    """Fetch top AI impacted roles"""
+    """Fetch top AI impacted roles with direct service fallback"""
     try:
-        response = requests.get(f"{API_BASE_URL}/analytics/top-ai-impact?limit={limit}")
+        response = requests.get(f"{API_BASE_URL}/analytics/top-ai-impact?limit={limit}", timeout=1.5)
         if response.status_code == 200:
             return response.json()["top_roles"]
-        return []
-    except Exception as e:
-        st.error(f"Error fetching top roles: {e}")
-        return []
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    return AnalyticsService.get_top_ai_impact_roles(db, limit=limit)
 
 
 def fetch_research_sources():
-    """Fetch research sources"""
+    """Fetch research sources with direct repository fallback"""
     try:
-        response = requests.get(f"{API_BASE_URL}/research/sources")
+        response = requests.get(f"{API_BASE_URL}/research/sources", timeout=1.5)
         if response.status_code == 200:
             return response.json()["sources"]
-        return []
-    except Exception as e:
-        st.error(f"Error fetching research sources: {e}")
-        return []
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    sources = ResearchSourceRepository.get_all(db)
+    return [
+        {
+            "id": s.id, "source_id": s.source_id, "title": s.title,
+            "publisher": s.publisher, "url": s.url,
+            "publication_date": s.publication_date, "source_type": s.source_type,
+            "summary": s.summary, "relevance_score": s.relevance_score
+        }
+        for s in sources
+    ]
 
 
 def compare_roles_api(role_1_id: int, role_2_id: int):
-    """Compare two roles"""
+    """Compare two roles with direct service fallback"""
     try:
         response = requests.post(
             f"{API_BASE_URL}/roles/compare",
-            json={"role_1_id": role_1_id, "role_2_id": role_2_id}
+            json={"role_1_id": role_1_id, "role_2_id": role_2_id},
+            timeout=1.5
         )
         if response.status_code == 200:
             return response.json()
-        return None
-    except Exception as e:
-        st.error(f"Error comparing roles: {e}")
-        return None
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    return RoleComparisonService.compare_roles(db, role_1_id, role_2_id)
 
 
 def ask_question_api(question: str, context_role_id: Optional[int] = None):
-    """Ask intelligence question"""
+    """Ask intelligence question with direct AIService fallback"""
     try:
         response = requests.post(
             f"{API_BASE_URL}/ask",
-            json={"question": question, "context_role_id": context_role_id}
+            json={"question": question, "context_role_id": context_role_id},
+            timeout=1.5
         )
         if response.status_code == 200:
             return response.json()
-        return None
-    except Exception as e:
-        st.error(f"Error calling Ask Intelligence API: {e}")
-        return None
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    return AIService.answer_question(db, question, context_role_id)
 
 
 def initialize_seed_data():
-    """Initialize database with seed data"""
+    """Initialize database with seed data with direct fallback"""
     try:
-        response = requests.post(f"{API_BASE_URL}/seed-data/initialize")
+        response = requests.post(f"{API_BASE_URL}/seed-data/initialize", timeout=1.5)
         if response.status_code == 200:
             return response.json()
-        return None
-    except Exception as e:
-        st.error(f"Error initializing database: {e}")
-        return None
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    from scripts.seed_data import seed_banking_roles
+    db = get_standalone_db()
+    msg = seed_banking_roles(db)
+    return {"status": "success", "message": msg}
+
+
+def create_new_role_api(role_data: dict):
+    """Create new role with direct service fallback"""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/roles/new-role/create-and-analyze",
+            json=role_data,
+            timeout=1.5
+        )
+        if response.status_code == 200:
+            return response.json()
+    except Exception:
+        pass
+    
+    # Standalone Fallback
+    db = get_standalone_db()
+    role_name = role_data.get("role_name") or role_data.get("name")
+    role_description = role_data.get("role_description") or role_data.get("description", "")
+    processes = role_data.get("processes", [])
+    
+    return RoleCreationService.create_role_with_analysis(
+        db=db,
+        industry_id=role_data.get("industry_id", 1),
+        role_name=role_name,
+        role_description=role_description,
+        processes_data=processes,
+        department=role_data.get("department"),
+        current_responsibilities=role_data.get("current_responsibilities"),
+        skills_data=role_data.get("skills")
+    )
 
 
 # ========================
@@ -308,7 +393,9 @@ def page_dashboard():
     st.caption("Banking & Financial Services Industry Intelligence")
     
     stats = fetch_dashboard_stats()
-    if not stats or not stats.get("summary"):
+    
+    # Auto seed if empty
+    if not stats or not stats.get("summary") or stats.get("summary", {}).get("total_roles", 0) == 0:
         st.warning("Database contains no initialized roles. Click below to seed 20 representative banking roles.")
         if st.button("🚀 Initialize Banking Intelligence Database", type="primary"):
             with st.spinner("Seeding 20 banking roles, activity impact matrices, and research evidence..."):
@@ -436,6 +523,11 @@ def page_role_explorer():
     roles = fetch_roles()
     if not roles:
         st.warning("No roles found in database. Please seed the database first.")
+        if st.button("🚀 Initialize Banking Intelligence Database", type="primary"):
+            res = initialize_seed_data()
+            if res:
+                st.success("Successfully seeded database!")
+                st.rerun()
         return
 
     # Filter controls
@@ -795,23 +887,19 @@ def page_add_new_role():
         try:
             proc_payload = json.loads(processes_json)
             with st.spinner(f"Creating '{role_name}', calculating AI impact, generating future profile, and persisting to DB..."):
-                response = requests.post(
-                    f"{API_BASE_URL}/roles/new-role/create-and-analyze",
-                    json={
-                        "role_name": role_name,
-                        "department": department,
-                        "role_description": description,
-                        "current_responsibilities": current_responsibilities,
-                        "processes": proc_payload
-                    }
-                )
+                res = create_new_role_api({
+                    "role_name": role_name,
+                    "department": department,
+                    "role_description": description,
+                    "current_responsibilities": current_responsibilities,
+                    "processes": proc_payload
+                })
 
-                if response.status_code == 200:
-                    res = response.json()
+                if res:
                     st.success(f"✅ Role '{role_name}' successfully created, analyzed, and persisted in database!")
                     st.json(res)
                 else:
-                    st.error(f"Error from server: {response.text}")
+                    st.error("Error creating role.")
         except json.JSONDecodeError:
             st.error("Invalid JSON format for processes.")
 
@@ -914,6 +1002,12 @@ def page_research_evidence():
 def main():
     st.sidebar.title("⚡ MODUS Role-AI")
     st.sidebar.caption("Role-Level AI Intelligence Platform")
+
+    # Auto-initialize DB on startup if empty (for Streamlit Cloud)
+    db = get_standalone_db()
+    if db.query(RoleRepository.get_all).count if hasattr(RoleRepository, 'count') else RoleRepository.get_all(db) == []:
+        from scripts.seed_data import seed_banking_roles
+        seed_banking_roles(db)
 
     pages = {
         "📊 Executive Dashboard": page_dashboard,
